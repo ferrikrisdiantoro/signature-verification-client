@@ -3,7 +3,7 @@ import * as ort from 'onnxruntime-web';
 // Configuration
 const MODEL_PATH = '/models/signature_feature_extractor.onnx';
 const IMG_SIZE = 128;
-const OPTIMAL_THRESHOLD = 0.557; // From training
+const OPTIMAL_THRESHOLD = 0.425; // Optimized for 85.1% accuracy
 
 // Anchor files mapping: [Display Name, Filename]
 const ANCHOR_FILES: [string, string][] = [
