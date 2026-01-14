@@ -1,26 +1,26 @@
 "use client";
 
 import React, { useState, useRef, useCallback } from "react";
-import Webcam from "react-webcam";
-import Cropper from "react-easy-crop";
-import { Camera01Icon, CheckmarkCircle01Icon, Cancel01Icon, Image01Icon, ArrowRight01Icon } from "hugeicons-react";
+import dynamic from "next/dynamic";
+import { Camera01Icon, CheckmarkCircle01Icon, Cancel01Icon, UserIcon } from "hugeicons-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { verifySignature } from "@/lib/inference";
 import { cn } from "@/lib/utils";
+import { findBestMatch, dummyVerifySignature } from "@/lib/inference";
 
-// Mock User List (42 Users)
-const USERS = Array.from({ length: 42 }, (_, i) => ({
-    id: i,
-    name: `Respondent ${i + 1}`,
-    anchorPath: `/anchors/user_${i}.png` // Assuming this structure
-}));
+// Dynamic import for Webcam and Cropper to avoid SSR issues
+// @ts-expect-error - dynamic import type mismatch with react-webcam
+const Webcam = dynamic(() => import("react-webcam"), { ssr: false });
+const Cropper = dynamic(() => import("react-easy-crop").then(mod => mod.default), { ssr: false });
+
+// Configuration: set to true to use real ONNX model, false for dummy
+const USE_REAL_MODEL = true; // Set to true when anchor images are ready
 
 export default function SignatureVerifier() {
-    const [step, setStep] = useState<"select" | "capture" | "crop" | "result">("select");
-    const [selectedUserId, setSelectedUserId] = useState<number>(0);
+    const [step, setStep] = useState<"capture" | "crop" | "result">("capture");
     const [imageSrc, setImageSrc] = useState<string | null>(null);
     const [croppedImage, setCroppedImage] = useState<string | null>(null);
+    const [isMounted, setIsMounted] = useState(false);
 
     // Crop State
     const [crop, setCrop] = useState({ x: 0, y: 0 });
@@ -29,32 +29,41 @@ export default function SignatureVerifier() {
 
     // Result State
     const [isVerifying, setIsVerifying] = useState(false);
-    const [result, setResult] = useState<{ score: number; isMatch: boolean } | null>(null);
+    const [result, setResult] = useState<{
+        matchedRespondent: string;
+        similarity: number;
+        isMatch: boolean
+    } | null>(null);
     const [error, setError] = useState<string | null>(null);
 
-    const webcamRef = useRef<Webcam>(null);
+    const webcamRef = useRef<any>(null);
+
+    // Check if component is mounted (client-side only)
+    React.useEffect(() => {
+        setIsMounted(true);
+    }, []);
 
     // Capture
     const capture = useCallback(() => {
-        const imageSrc = webcamRef.current?.getScreenshot();
-        if (imageSrc) {
-            setImageSrc(imageSrc);
+        const screenshot = webcamRef.current?.getScreenshot();
+        if (screenshot) {
+            setImageSrc(screenshot);
             setStep("crop");
         }
-    }, [webcamRef]);
+    }, []);
 
     // Crop Complete
-    const onCropComplete = useCallback((croppedArea: any, croppedAreaPixels: any) => {
+    const onCropComplete = useCallback((_croppedArea: any, croppedAreaPixels: any) => {
         setCroppedAreaPixels(croppedAreaPixels);
     }, []);
 
     // Generate Cropped Image
     const showCroppedImage = async () => {
         try {
-            const croppedImage = await getCroppedImg(imageSrc!, croppedAreaPixels);
-            setCroppedImage(croppedImage);
+            const cropped = await getCroppedImg(imageSrc!, croppedAreaPixels);
+            setCroppedImage(cropped);
             setStep("result");
-            handleVerify(croppedImage);
+            handleVerify(cropped);
         } catch (e) {
             console.error(e);
         }
@@ -65,27 +74,39 @@ export default function SignatureVerifier() {
         setIsVerifying(true);
         setError(null);
         try {
-            const user = USERS.find(u => u.id === Number(selectedUserId));
-            if (!user) throw new Error("User not found");
-
-            // Verify against anchor
-            // Note: In a real app, anchor images must exist. 
-            // If they don't, this will fail. We'll add a catch.
-            const res = await verifySignature(capturedImg, user.anchorPath);
+            let res;
+            if (USE_REAL_MODEL) {
+                // Use real ONNX model
+                const match = await findBestMatch(capturedImg);
+                res = {
+                    matchedRespondent: match.respondent,
+                    similarity: match.similarity,
+                    isMatch: match.isMatch
+                };
+            } else {
+                // Use dummy verification
+                const dummy = dummyVerifySignature();
+                // Add delay for UX
+                await new Promise(resolve => setTimeout(resolve, 1500));
+                res = {
+                    matchedRespondent: dummy.respondent,
+                    similarity: dummy.similarity,
+                    isMatch: dummy.isMatch
+                };
+            }
             setResult(res);
         } catch (err: any) {
             console.error(err);
-            // Fallback or Error message
-            setError("Failed to verify. Ensure model is loaded and anchor images exist in /public/anchors/.");
+            setError("Gagal memverifikasi tanda tangan. Silakan coba lagi.");
         } finally {
             setIsVerifying(false);
         }
     };
 
     // Helper for cropping
-    const getCroppedImg = async (imageSrc: string, pixelCrop: any): Promise<string> => {
+    const getCroppedImg = async (src: string, pixelCrop: any): Promise<string> => {
         const image = new Image();
-        image.src = imageSrc;
+        image.src = src;
         await new Promise((resolve) => (image.onload = resolve));
 
         const canvas = document.createElement("canvas");
@@ -111,87 +132,99 @@ export default function SignatureVerifier() {
     };
 
     const reset = () => {
-        setStep("select");
+        setStep("capture");
         setImageSrc(null);
         setCroppedImage(null);
         setResult(null);
         setError(null);
+        setCrop({ x: 0, y: 0 });
+        setZoom(1);
     };
+
+    // Loading state for SSR
+    if (!isMounted) {
+        return (
+            <Card className="w-full max-w-md mx-auto shadow-lg border-slate-200">
+                <CardHeader className="text-center">
+                    <CardTitle className="text-xl font-bold text-slate-800">Verifikasi Tanda Tangan</CardTitle>
+                    <CardDescription>Sistem Kontrol Keaslian berbasis AI</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                    <div className="aspect-[4/3] bg-slate-100 rounded-lg flex items-center justify-center">
+                        <p className="text-muted-foreground">Memuat kamera...</p>
+                    </div>
+                </CardContent>
+            </Card>
+        );
+    }
 
     return (
         <Card className="w-full max-w-md mx-auto shadow-lg border-slate-200">
             <CardHeader className="text-center">
-                <CardTitle className="text-xl font-bold text-slate-800">Signature Verification</CardTitle>
-                <CardDescription>AI-Powered Authenticity Check</CardDescription>
+                <CardTitle className="text-xl font-bold text-slate-800">Verifikasi Tanda Tangan</CardTitle>
+                <CardDescription>Sistem Kontrol Keaslian berbasis AI</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
 
-                {/* Step 1: Select User */}
-                {step === "select" && (
-                    <div className="space-y-4">
-                        <label className="block text-sm font-medium text-slate-700">Select Respondent</label>
-                        <select
-                            className="w-full p-2 border rounded-md border-slate-300"
-                            value={selectedUserId}
-                            onChange={(e) => setSelectedUserId(Number(e.target.value))}
-                        >
-                            {USERS.map(u => (
-                                <option key={u.id} value={u.id}>{u.name}</option>
-                            ))}
-                        </select>
-                        <Button className="w-full" onClick={() => setStep("capture")}>
-                            Next <ArrowRight01Icon className="ml-2 w-4 h-4" />
-                        </Button>
-                    </div>
-                )}
-
-                {/* Step 2: Capture */}
+                {/* Step 1: Capture */}
                 {step === "capture" && (
                     <div className="space-y-4">
                         <div className="relative aspect-[4/3] bg-black rounded-lg overflow-hidden">
-                            <Webcam
-                                audio={false}
-                                ref={webcamRef}
-                                screenshotFormat="image/jpeg"
-                                videoConstraints={{ facingMode: "environment" }} // Use back camera
-                                className="w-full h-full object-cover"
-                            />
-                            {/* Overlay for Box Card - Kartu Kontrol Frame */}
+                            {(() => {
+                                const WebcamAny = Webcam as any;
+                                return (
+                                    <WebcamAny
+                                        audio={false}
+                                        ref={webcamRef}
+                                        screenshotFormat="image/jpeg"
+                                        videoConstraints={{ facingMode: "environment" }}
+                                        className="w-full h-full object-cover"
+                                    />
+                                );
+                            })()}
                             <div className="absolute inset-0 border-2 border-white/50 pointer-events-none flex items-center justify-center">
-                                <div className="w-[80%] h-[20%] border-2 border-green-400 rounded-md box-content shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]"></div>
-                                <p className="absolute bottom-4 text-white text-xs bg-black/50 px-2 py-1 rounded">Align Signature inside Green Box</p>
+                                <div className="w-[60%] aspect-square border-2 border-green-400 rounded-md box-content shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]"></div>
+                                <p className="absolute bottom-4 text-white text-xs bg-black/50 px-2 py-1 rounded">
+                                    Posisikan tanda tangan di dalam kotak hijau
+                                </p>
                             </div>
                         </div>
                         <Button className="w-full" onClick={capture}>
-                            <Camera01Icon className="mr-2 w-4 h-4" /> Capture Photo
+                            <Camera01Icon className="mr-2 w-4 h-4" /> Ambil Foto
                         </Button>
-                        <Button variant="ghost" className="w-full" onClick={() => setStep("select")}>Back</Button>
                     </div>
                 )}
 
-                {/* Step 3: Crop */}
+                {/* Step 2: Crop */}
                 {step === "crop" && imageSrc && (
                     <div className="space-y-4">
                         <div className="relative aspect-[4/3] bg-black rounded-lg overflow-hidden">
+                            {/* @ts-expect-error - props type mismatch with dynamic import */}
                             <Cropper
                                 image={imageSrc}
                                 crop={crop}
                                 zoom={zoom}
-                                aspect={3 / 1} // Signature aspect ratio roughly
+                                aspect={1}
                                 onCropChange={setCrop}
                                 onCropComplete={onCropComplete}
                                 onZoomChange={setZoom}
                             />
                         </div>
-                        <p className="text-xs text-center text-muted-foreground">Pinch or scroll to zoom. Drag to verify area.</p>
+                        <p className="text-xs text-center text-muted-foreground">
+                            Cubit untuk zoom. Geser untuk memilih area tanda tangan.
+                        </p>
                         <div className="flex gap-2">
-                            <Button variant="outline" className="flex-1" onClick={() => setStep("capture")}>Retake</Button>
-                            <Button className="flex-1" onClick={showCroppedImage}>Verify Signature</Button>
+                            <Button variant="outline" className="flex-1" onClick={() => setStep("capture")}>
+                                Ulangi
+                            </Button>
+                            <Button className="flex-1" onClick={showCroppedImage}>
+                                Verifikasi
+                            </Button>
                         </div>
                     </div>
                 )}
 
-                {/* Step 4: Result */}
+                {/* Step 3: Result */}
                 {step === "result" && (
                     <div className="text-center space-y-6 animate-in fade-in zoom-in duration-300">
                         {croppedImage && (
@@ -201,7 +234,8 @@ export default function SignatureVerifier() {
                         {isVerifying ? (
                             <div className="py-8">
                                 <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto"></div>
-                                <p className="mt-2 text-sm text-muted-foreground">Analyzing biometrics...</p>
+                                <p className="mt-2 text-sm text-muted-foreground">Menganalisis tanda tangan...</p>
+                                <p className="text-xs text-muted-foreground mt-1">Mencocokkan dengan 42 responden</p>
                             </div>
                         ) : error ? (
                             <div className="py-4 text-red-500 bg-red-50 rounded-lg">
@@ -211,28 +245,41 @@ export default function SignatureVerifier() {
                         ) : result ? (
                             <div className={cn(
                                 "p-6 rounded-xl border-2",
-                                result.score > 70 ? "border-green-100 bg-green-50" : "border-red-100 bg-red-50"
+                                result.isMatch ? "border-green-100 bg-green-50" : "border-amber-100 bg-amber-50"
                             )}>
-                                <div className="flex justify-center mb-2">
-                                    {result.score > 70 ? (
+                                <div className="flex justify-center mb-3">
+                                    {result.isMatch ? (
                                         <CheckmarkCircle01Icon className="w-12 h-12 text-green-600" />
                                     ) : (
-                                        <Cancel01Icon className="w-12 h-12 text-red-600" />
+                                        <Cancel01Icon className="w-12 h-12 text-amber-600" />
                                     )}
                                 </div>
-                                <h3 className="text-2xl font-bold">
-                                    {result.score.toFixed(1)}% Match
+
+                                <h3 className="text-3xl font-bold text-slate-800">
+                                    {result.similarity.toFixed(1)}%
                                 </h3>
-                                <p className={cn(
-                                    "mt-1 font-medium",
-                                    result.score > 70 ? "text-green-700" : "text-red-700"
+                                <p className="text-sm text-muted-foreground mb-4">Kemiripan</p>
+
+                                <div className={cn(
+                                    "flex items-center justify-center gap-2 py-3 px-4 rounded-lg",
+                                    result.isMatch ? "bg-green-100" : "bg-amber-100"
                                 )}>
-                                    {result.score > 70 ? "Signature Verified (Genuine)" : "Signature Mismatch (Potential Fake)"}
+                                    <UserIcon className="w-5 h-5 text-slate-600" />
+                                    <span className="font-semibold text-slate-800">{result.matchedRespondent}</span>
+                                </div>
+
+                                <p className={cn(
+                                    "mt-4 font-medium text-sm",
+                                    result.isMatch ? "text-green-700" : "text-amber-700"
+                                )}>
+                                    {result.isMatch
+                                        ? "✓ Tanda Tangan Terverifikasi (Asli)"
+                                        : "⚠ Kemiripan Rendah - Perlu Verifikasi Manual"}
                                 </p>
                             </div>
                         ) : null}
 
-                        <Button className="w-full" onClick={reset}>Verify Another</Button>
+                        <Button className="w-full" onClick={reset}>Verifikasi Lagi</Button>
                     </div>
                 )}
 
