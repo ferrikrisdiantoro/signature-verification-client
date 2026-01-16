@@ -85,14 +85,25 @@ async function preprocess(imageSource: string | HTMLImageElement): Promise<ort.T
     const { data } = imageData;
     const input = new Float32Array(IMG_SIZE * IMG_SIZE * 1);
 
-    // Grayscale & Normalize
+    // Grayscale, Normalize & Binarize (Line Removal)
+    // Threshold to separate ink (dark) from paper/lines (light)
+    const BINARY_THRESHOLD = 0.48;
+
     for (let i = 0; i < data.length; i += 4) {
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
+
         // Luminosity method
         const gray = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
-        input[i / 4] = gray;
+
+        // Smart Cleaning: If pixel is lighter than threshold, treat as white paper
+        // This removes grid lines, shadows, and paper texture
+        if (gray > BINARY_THRESHOLD) {
+            input[i / 4] = 1.0; // Force White
+        } else {
+            input[i / 4] = gray; // Keep Ink details
+        }
     }
 
     return new ort.Tensor('float32', input, [1, IMG_SIZE, IMG_SIZE, 1]);
