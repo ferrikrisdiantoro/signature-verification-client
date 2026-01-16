@@ -2,22 +2,24 @@
 
 import React, { useState, useRef, useCallback } from "react";
 import dynamic from "next/dynamic";
-import { Camera01Icon, CheckmarkCircle01Icon, Cancel01Icon, UserIcon } from "hugeicons-react";
+import { Camera01Icon, CheckmarkCircle01Icon, Cancel01Icon, UserIcon, RefreshIcon } from "hugeicons-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { findBestMatch, dummyVerifySignature } from "@/lib/inference";
+import { verifySignature, ANCHOR_FILES, dummyVerifySignature } from "@/lib/inference";
 
 // Dynamic import for Webcam and Cropper to avoid SSR issues
 // @ts-expect-error - dynamic import type mismatch with react-webcam
-const Webcam = dynamic(() => import("react-webcam"), { ssr: false });
+const Webcam = dynamic(() => import("react-webcam").then(mod => mod.default), { ssr: false });
 const Cropper = dynamic(() => import("react-easy-crop").then(mod => mod.default), { ssr: false });
 
 // Configuration: set to true to use real ONNX model, false for dummy
-const USE_REAL_MODEL = true; // Set to true when anchor images are ready
+const USE_REAL_MODEL = true;
 
 export default function SignatureVerifier() {
-    const [step, setStep] = useState<"capture" | "crop" | "result">("capture");
+    const [step, setStep] = useState<"select" | "capture" | "crop" | "result">("select");
+    const [selectedUser, setSelectedUser] = useState<string>("");
+
     const [imageSrc, setImageSrc] = useState<string | null>(null);
     const [croppedImage, setCroppedImage] = useState<string | null>(null);
     const [isMounted, setIsMounted] = useState(false);
@@ -30,7 +32,7 @@ export default function SignatureVerifier() {
     // Result State
     const [isVerifying, setIsVerifying] = useState(false);
     const [result, setResult] = useState<{
-        matchedRespondent: string;
+        distance: number;
         similarity: number;
         isMatch: boolean
     } | null>(null);
@@ -42,6 +44,10 @@ export default function SignatureVerifier() {
     React.useEffect(() => {
         setIsMounted(true);
     }, []);
+
+    const handleSelectUser = (value: string) => {
+        setSelectedUser(value);
+    };
 
     // Capture
     const capture = useCallback(() => {
@@ -69,27 +75,27 @@ export default function SignatureVerifier() {
         }
     };
 
-    // Verification Logic
+    // Verification Logic for 1:1
     const handleVerify = async (capturedImg: string) => {
         setIsVerifying(true);
         setError(null);
         try {
+            // Find filename for selected user
+            const anchor = ANCHOR_FILES.find(a => a[0] === selectedUser);
+            if (!anchor) throw new Error("Anchor not found");
+
+            const anchorPath = `/anchors/${encodeURIComponent(anchor[1])}`; // Path to public folder
+
             let res;
             if (USE_REAL_MODEL) {
-                // Use real ONNX model
-                const match = await findBestMatch(capturedImg);
-                res = {
-                    matchedRespondent: match.respondent,
-                    similarity: match.similarity,
-                    isMatch: match.isMatch
-                };
+                // Use real ONNX model (1:1 Verification)
+                res = await verifySignature(capturedImg, anchorPath);
             } else {
                 // Use dummy verification
                 const dummy = dummyVerifySignature();
-                // Add delay for UX
                 await new Promise(resolve => setTimeout(resolve, 1500));
                 res = {
-                    matchedRespondent: dummy.respondent,
+                    distance: 0,
                     similarity: dummy.similarity,
                     isMatch: dummy.isMatch
                 };
@@ -132,7 +138,8 @@ export default function SignatureVerifier() {
     };
 
     const reset = () => {
-        setStep("capture");
+        setStep("select");
+        setSelectedUser("");
         setImageSrc(null);
         setCroppedImage(null);
         setResult(null);
@@ -142,34 +149,69 @@ export default function SignatureVerifier() {
     };
 
     // Loading state for SSR
-    if (!isMounted) {
-        return (
-            <Card className="w-full max-w-md mx-auto shadow-lg border-slate-200">
-                <CardHeader className="text-center">
-                    <CardTitle className="text-xl font-bold text-slate-800">Verifikasi Tanda Tangan</CardTitle>
-                    <CardDescription>Sistem Kontrol Keaslian berbasis AI</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                    <div className="aspect-[4/3] bg-slate-100 rounded-lg flex items-center justify-center">
-                        <p className="text-muted-foreground">Memuat kamera...</p>
-                    </div>
-                </CardContent>
-            </Card>
-        );
-    }
+    if (!isMounted) return null;
 
     return (
         <Card className="w-full max-w-md mx-auto shadow-lg border-slate-200">
-            <CardHeader className="text-center">
+            <CardHeader className="text-center pb-4">
                 <CardTitle className="text-xl font-bold text-slate-800">Verifikasi Tanda Tangan</CardTitle>
-                <CardDescription>Sistem Kontrol Keaslian berbasis AI</CardDescription>
+                <CardDescription>Sistem Kontrol Keaslian 1:1</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
 
-                {/* Step 1: Capture */}
+                {/* Step 1: Select Respondent */}
+                {step === "select" && (
+                    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium text-slate-700">Pilih Nama Responden</label>
+                            <select
+                                className="w-full p-2 border border-slate-300 rounded-md bg-white text-slate-900 focus:ring-2 focus:ring-slate-400 focus:outline-none"
+                                value={selectedUser}
+                                onChange={(e) => handleSelectUser(e.target.value)}
+                            >
+                                <option value="" disabled>Cari nama...</option>
+                                {ANCHOR_FILES.map(([name], idx) => (
+                                    <option key={idx} value={name}>{name}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {selectedUser && (() => {
+                            const anchor = ANCHOR_FILES.find(a => a[0] === selectedUser);
+                            return anchor ? (
+                                <div className="space-y-2">
+                                    <p className="text-sm font-medium text-slate-700">Contoh Tanda Tangan Asli:</p>
+                                    <div className="border rounded-lg p-4 bg-slate-50 flex justify-center">
+                                        <img
+                                            src={`/anchors/${encodeURIComponent(anchor[1])}`}
+                                            alt="Reference Signature"
+                                            className="h-24 object-contain mix-blend-multiply opacity-80"
+                                        />
+                                    </div>
+                                    <p className="text-xs text-muted-foreground text-center">Pastikan tanda tangan mirip dengan contoh di atas.</p>
+                                </div>
+                            ) : null;
+                        })()}
+
+                        <Button
+                            className="w-full"
+                            disabled={!selectedUser}
+                            onClick={() => setStep("capture")}
+                        >
+                            Lanjut ke Kamera
+                        </Button>
+                    </div>
+                )}
+
+                {/* Step 2: Capture */}
                 {step === "capture" && (
-                    <div className="space-y-4">
-                        <div className="relative aspect-[4/3] bg-black rounded-lg overflow-hidden">
+                    <div className="space-y-4 animate-in fade-in duration-300">
+                        <div className="flex justify-between items-center px-1">
+                            <p className="text-sm font-semibold text-slate-700">User: {selectedUser}</p>
+                            <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => setStep("select")}>Ganti</Button>
+                        </div>
+
+                        <div className="relative aspect-[4/3] bg-black rounded-lg overflow-hidden ring-1 ring-slate-200">
                             {(() => {
                                 const WebcamAny = Webcam as any;
                                 return (
@@ -183,35 +225,37 @@ export default function SignatureVerifier() {
                                 );
                             })()}
                             <div className="absolute inset-0 border-2 border-white/50 pointer-events-none flex items-center justify-center">
+                                {/* Square Guide */}
                                 <div className="w-[60%] aspect-square border-2 border-green-400 rounded-md box-content shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]"></div>
                                 <p className="absolute bottom-4 text-white text-xs bg-black/50 px-2 py-1 rounded">
-                                    Posisikan tanda tangan di dalam kotak hijau
+                                    Posisikan tanda tangan di kotak hijau
                                 </p>
                             </div>
                         </div>
+
                         <Button className="w-full" onClick={capture}>
                             <Camera01Icon className="mr-2 w-4 h-4" /> Ambil Foto
                         </Button>
                     </div>
                 )}
 
-                {/* Step 2: Crop */}
+                {/* Step 3: Crop */}
                 {step === "crop" && imageSrc && (
-                    <div className="space-y-4">
+                    <div className="space-y-4 animate-in fade-in duration-300">
                         <div className="relative aspect-[4/3] bg-black rounded-lg overflow-hidden">
-                            {/* @ts-expect-error - props type mismatch with dynamic import */}
+                            {/* @ts-ignore - dynamic import weirdness workaround */}
                             <Cropper
                                 image={imageSrc}
                                 crop={crop}
                                 zoom={zoom}
-                                aspect={1}
+                                aspect={1} // Square aspect ratio for model
                                 onCropChange={setCrop}
                                 onCropComplete={onCropComplete}
                                 onZoomChange={setZoom}
                             />
                         </div>
                         <p className="text-xs text-center text-muted-foreground">
-                            Cubit untuk zoom. Geser untuk memilih area tanda tangan.
+                            Cubit/geser untuk sesuaikan area tanda tangan.
                         </p>
                         <div className="flex gap-2">
                             <Button variant="outline" className="flex-1" onClick={() => setStep("capture")}>
@@ -224,18 +268,36 @@ export default function SignatureVerifier() {
                     </div>
                 )}
 
-                {/* Step 3: Result */}
+                {/* Step 4: Result */}
                 {step === "result" && (
                     <div className="text-center space-y-6 animate-in fade-in zoom-in duration-300">
-                        {croppedImage && (
-                            <img src={croppedImage} alt="Captured" className="h-20 mx-auto border rounded shadow-sm" />
-                        )}
+                        {/* Comparison View */}
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                                <p className="text-xs font-medium text-muted-foreground">Input</p>
+                                {croppedImage && (
+                                    <img src={croppedImage} alt="Input" className="h-20 w-full object-contain border rounded bg-white" />
+                                )}
+                            </div>
+                            <div className="space-y-1">
+                                <p className="text-xs font-medium text-muted-foreground">Referensi ({selectedUser})</p>
+                                {selectedUser && (() => {
+                                    const anchor = ANCHOR_FILES.find(a => a[0] === selectedUser);
+                                    return anchor ? (
+                                        <img
+                                            src={`/anchors/${encodeURIComponent(anchor[1])}`}
+                                            alt="Ref"
+                                            className="h-20 w-full object-contain border rounded bg-slate-50 mix-blend-multiply"
+                                        />
+                                    ) : null;
+                                })()}
+                            </div>
+                        </div>
 
                         {isVerifying ? (
                             <div className="py-8">
                                 <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto"></div>
-                                <p className="mt-2 text-sm text-muted-foreground">Menganalisis tanda tangan...</p>
-                                <p className="text-xs text-muted-foreground mt-1">Mencocokkan dengan 42 responden</p>
+                                <p className="mt-2 text-sm text-muted-foreground">Menganalisis kemiripan...</p>
                             </div>
                         ) : error ? (
                             <div className="py-4 text-red-500 bg-red-50 rounded-lg">
@@ -244,42 +306,36 @@ export default function SignatureVerifier() {
                             </div>
                         ) : result ? (
                             <div className={cn(
-                                "p-6 rounded-xl border-2",
-                                result.isMatch ? "border-green-100 bg-green-50" : "border-amber-100 bg-amber-50"
+                                "p-6 rounded-xl border-2 transition-all duration-500",
+                                result.isMatch ? "border-green-100 bg-green-50" : "border-red-100 bg-red-50"
                             )}>
                                 <div className="flex justify-center mb-3">
                                     {result.isMatch ? (
-                                        <CheckmarkCircle01Icon className="w-12 h-12 text-green-600" />
+                                        <CheckmarkCircle01Icon className="w-12 h-12 text-green-600 animate-in bounce-in duration-700" />
                                     ) : (
-                                        <Cancel01Icon className="w-12 h-12 text-amber-600" />
+                                        <Cancel01Icon className="w-12 h-12 text-red-600 animate-in shake duration-500" />
                                     )}
                                 </div>
 
                                 <h3 className="text-3xl font-bold text-slate-800">
                                     {result.similarity.toFixed(1)}%
                                 </h3>
-                                <p className="text-sm text-muted-foreground mb-4">Kemiripan</p>
-
-                                <div className={cn(
-                                    "flex items-center justify-center gap-2 py-3 px-4 rounded-lg",
-                                    result.isMatch ? "bg-green-100" : "bg-amber-100"
-                                )}>
-                                    <UserIcon className="w-5 h-5 text-slate-600" />
-                                    <span className="font-semibold text-slate-800">{result.matchedRespondent}</span>
-                                </div>
+                                <p className="text-sm text-muted-foreground mb-4">Tingkat Kemiripan</p>
 
                                 <p className={cn(
-                                    "mt-4 font-medium text-sm",
-                                    result.isMatch ? "text-green-700" : "text-amber-700"
+                                    "font-bold text-lg",
+                                    result.isMatch ? "text-green-700" : "text-red-700"
                                 )}>
                                     {result.isMatch
-                                        ? "✓ Tanda Tangan Terverifikasi (Asli)"
-                                        : "⚠ Kemiripan Rendah - Perlu Verifikasi Manual"}
+                                        ? "VERIFIED (Cocok)"
+                                        : "REJECTED (Tidak Cocok)"}
                                 </p>
                             </div>
                         ) : null}
 
-                        <Button className="w-full" onClick={reset}>Verifikasi Lagi</Button>
+                        <Button className="w-full" variant="outline" onClick={reset}>
+                            <RefreshIcon className="mr-2 w-4 h-4" /> Verifikasi User Lain
+                        </Button>
                     </div>
                 )}
 
