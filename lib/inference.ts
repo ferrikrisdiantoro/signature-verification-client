@@ -63,6 +63,7 @@ async function loadImage(url: string): Promise<HTMLImageElement> {
 }
 
 // Preprocess image to Tensor (1, 128, 128, 1)
+// Includes: Grayscale conversion, Adaptive Thresholding, Green Color Filtering
 async function preprocess(imageSource: string | HTMLImageElement): Promise<ort.Tensor> {
     let img_element: HTMLImageElement;
     if (typeof imageSource === 'string') {
@@ -83,26 +84,47 @@ async function preprocess(imageSource: string | HTMLImageElement): Promise<ort.T
     // Get Data
     const imageData = ctx.getImageData(0, 0, IMG_SIZE, IMG_SIZE);
     const { data } = imageData;
-    const input = new Float32Array(IMG_SIZE * IMG_SIZE * 1);
+    const grayValues: number[] = [];
 
-    // Grayscale, Normalize & Binarize (Line Removal)
-    // Threshold to separate ink (dark) from paper/lines (light)
-    const BINARY_THRESHOLD = 0.48;
-
+    // === PHASE 1: Convert to Grayscale with Green Filtering ===
     for (let i = 0; i < data.length; i += 4) {
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
 
-        // Luminosity method
-        const gray = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
+        // Detect Green-dominant pixels (lines on katrol paper)
+        // If Green channel is significantly higher than R and B, treat as background
+        const isGreenish = g > r * 1.2 && g > b * 1.2 && g > 80;
 
-        // Smart Cleaning: If pixel is lighter than threshold, treat as white paper
-        // This removes grid lines, shadows, and paper texture
-        if (gray > BINARY_THRESHOLD) {
-            input[i / 4] = 1.0; // Force White
+        if (isGreenish) {
+            grayValues.push(255); // Force white for green areas
         } else {
-            input[i / 4] = gray; // Keep Ink details
+            // Standard luminosity grayscale
+            const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+            grayValues.push(gray);
+        }
+    }
+
+    // === PHASE 2: Calculate Adaptive Threshold (Otsu-like) ===
+    // Find optimal threshold that separates ink from paper
+    let minGray = 255, maxGray = 0;
+    for (const g of grayValues) {
+        if (g < minGray) minGray = g;
+        if (g > maxGray) maxGray = g;
+    }
+
+    // Use simple mid-range threshold with bias towards preserving ink
+    // Typical ink is < 100, paper is > 180
+    const adaptiveThreshold = Math.min(160, (minGray + maxGray) / 2 + 20);
+
+    // === PHASE 3: Apply Binarization ===
+    const input = new Float32Array(IMG_SIZE * IMG_SIZE);
+    for (let i = 0; i < grayValues.length; i++) {
+        if (grayValues[i] > adaptiveThreshold) {
+            input[i] = 1.0; // White (paper)
+        } else {
+            // Keep ink detail but normalize
+            input[i] = grayValues[i] / 255.0;
         }
     }
 
