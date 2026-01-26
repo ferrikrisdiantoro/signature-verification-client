@@ -225,8 +225,8 @@ export default function SignatureVerifier() {
                                 );
                             })()}
                             <div className="absolute inset-0 border-2 border-white/50 pointer-events-none flex items-center justify-center">
-                                {/* Square Guide */}
-                                <div className="w-[60%] aspect-square border-2 border-green-400 rounded-md box-content shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]"></div>
+                                {/* Rectangular Guide (3:1 ratio as per client request) */}
+                                <div className="w-[80%] aspect-[3/1] border-2 border-green-400 rounded-md box-content shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]"></div>
                                 <p className="absolute bottom-4 text-white text-xs bg-black/50 px-2 py-1 rounded">
                                     Posisikan tanda tangan di kotak hijau
                                 </p>
@@ -248,7 +248,7 @@ export default function SignatureVerifier() {
                                 image={imageSrc}
                                 crop={crop}
                                 zoom={zoom}
-                                aspect={1} // Square aspect ratio for model
+                                aspect={3} // Rectangular 3:1 ratio (3cm x 1cm as per client)
                                 onCropChange={setCrop}
                                 onCropComplete={onCropComplete}
                                 onZoomChange={setZoom}
