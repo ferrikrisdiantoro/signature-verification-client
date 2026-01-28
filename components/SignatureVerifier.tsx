@@ -226,7 +226,7 @@ export default function SignatureVerifier() {
                             })()}
                             <div className="absolute inset-0 border-2 border-white/50 pointer-events-none flex items-center justify-center">
                                 {/* Rectangular Guide (3:1 ratio as per client request) */}
-                                <div className="w-[80%] aspect-[3/1] border-2 border-green-400 rounded-md box-content shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]"></div>
+                                <div className="w-[80%] aspect-square border-2 border-green-400 rounded-md box-content shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]"></div>
                                 <p className="absolute bottom-4 text-white text-xs bg-black/50 px-2 py-1 rounded">
                                     Posisikan tanda tangan di kotak hijau
                                 </p>
@@ -242,13 +242,13 @@ export default function SignatureVerifier() {
                 {/* Step 3: Crop */}
                 {step === "crop" && imageSrc && (
                     <div className="space-y-4 animate-in fade-in duration-300">
-                        <div className="relative aspect-[4/3] bg-black rounded-lg overflow-hidden">
+                        <div className="relative aspect-square bg-black rounded-lg overflow-hidden">
                             {/* @ts-ignore - dynamic import weirdness workaround */}
                             <Cropper
                                 image={imageSrc}
                                 crop={crop}
                                 zoom={zoom}
-                                aspect={3} // Rectangular 3:1 ratio (3cm x 1cm as per client)
+                                aspect={1} // Square 1:1
                                 onCropChange={setCrop}
                                 onCropComplete={onCropComplete}
                                 onZoomChange={setZoom}
